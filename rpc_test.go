@@ -2,6 +2,7 @@ package blobrpc
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/dnldd/blobrpc/rpc"
@@ -11,7 +12,43 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func TestServer(t *testing.T) {
+// Test handler represents a blobrpc handler, simplified for testing.
+type TestHandler struct {
+	executors map[string]Executor
+}
+
+func NewTestHandler() *TestHandler {
+	handler := TestHandler{
+		executors: make(map[string]Executor),
+	}
+
+	handler.executors["echo.v1"] = handler.Echo
+
+	return &handler
+}
+
+// ID generates the executor id from the provided route and version.
+func (h *TestHandler) ID(route string, version uint32) string {
+	return fmt.Sprintf("%s.v%d", route, version)
+}
+
+// FetchExecutor fetches the executor for the provided id.
+func (h *TestHandler) FetchExecutor(id string) (Executor, bool) {
+	executor, ok := h.executors[id]
+	return executor, ok
+}
+
+func (h *TestHandler) Echo(_ context.Context, req *rpc.Request) (*rpc.Response, error) {
+	return &rpc.Response{
+		Route:    req.Route,
+		Version:  req.Version,
+		Marshal_: req.Marshal_,
+		Payload:  req.Payload,
+		Error:    "",
+	}, nil
+}
+
+func TestRequestResponse(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -52,7 +89,7 @@ func TestServer(t *testing.T) {
 		Payload:  []byte("hello world"),
 	}
 
-	resp, err := cc.Send(ctx, req, []grpc.CallOption{}...)
+	resp, err := cc.Send(ctx, req)
 	assert.NoError(t, err)
 	assert.Equal(t, string(resp.Payload), "hello world")
 
@@ -64,7 +101,7 @@ func TestServer(t *testing.T) {
 		Payload:  []byte("hello world"),
 	}
 
-	_, err = cc.Send(ctx, req, []grpc.CallOption{}...)
+	_, err = cc.Send(ctx, req)
 	assert.Error(t, err)
 
 	// Ensure requests can have an empty payload.
@@ -75,7 +112,7 @@ func TestServer(t *testing.T) {
 		Payload:  []byte(""),
 	}
 
-	resp, err = cc.Send(ctx, req, []grpc.CallOption{}...)
+	resp, err = cc.Send(ctx, req)
 	assert.NoError(t, err)
 	assert.Equal(t, string(resp.Payload), "")
 
@@ -87,11 +124,16 @@ func TestServer(t *testing.T) {
 		Payload:  []byte(""),
 	}
 
-	resp, err = cc.Send(ctx, req, []grpc.CallOption{}...)
+	resp, err = cc.Send(ctx, req)
 	assert.Error(t, err)
 
-	// Ensure the server can be stopped.
+	// Ensure the server can be terminated.
 	bs.Stop()
+
+	// Ensure sending to terminated server errors.
+	resp, err = cc.Send(ctx, req)
+	assert.Error(t, err)
+
 	<-done
 	cancel()
 }
